@@ -1,8 +1,9 @@
 import torch
 from torch.autograd import Variable
+from torch.autograd.profiler import record_function
 from tensorboardX import SummaryWriter
 
-from utils import save_checkpoint, use_optimizer
+from utils import save_checkpoint, use_optimizer, _time
 from metrics import MetronAtK
 
 
@@ -23,15 +24,41 @@ class Engine(object):
         # implicit feedback
         self.crit = torch.nn.BCELoss()
 
+        # Timing
+        self.event_start = torch.cuda.Event(enable_timing=True)
+        self.event_end = torch.cuda.Event(enable_timing=True)
+        self.time_fwd = 0
+        self.time_bwd = 0
+        self.batch_count = 0
+
+
     def train_single_batch(self, users, items, ratings):
         assert hasattr(self, 'model'), 'Please specify the exact model !'
+        self.batch_count += 1
         if self.config['use_cuda'] is True:
             users, items, ratings = users.cuda(), items.cuda(), ratings.cuda()
-        self.opt.zero_grad()
-        ratings_pred = self.model(users, items)
-        loss = self.crit(ratings_pred.view(-1), ratings)
-        loss.backward()
-        self.opt.step()
+        with record_function("## Forward ##"):
+            t1 = _time(self.config['use_cuda'])
+            if self.config['use_cuda']:
+                self.event_start.record()
+            ratings_pred = self.model(users, items)
+            if self.config['use_cuda']:
+                self.event_end.record()
+            t2 = _time(self.config['use_cuda'])
+        self.time_fwd += self.event_start.elapsed_time(self.event_end) * 1.e-3 if self.config['use_cuda'] else (t2 - t1)
+        with record_function("## Backward ##"):
+            t1 = _time(self.config['use_cuda'])
+            if self.config['use_cuda']:
+                self.event_start.record()
+            loss = self.crit(ratings_pred.view(-1), ratings)
+            loss.backward()
+            self.opt.step()
+            self.opt.zero_grad()
+            if self.config['use_cuda']:
+                self.event_end.record()
+            t2 = _time(self.config['use_cuda'])
+        self.time_bwd += self.event_start.elapsed_time(self.event_end) * 1.e-3 if self.config['use_cuda'] else (t2 - t1)
+
         loss = loss.item()
         return loss
 
@@ -40,11 +67,14 @@ class Engine(object):
         self.model.train()
         total_loss = 0
         for batch_id, batch in enumerate(train_loader):
+            if batch_id >= self.config['num_batches']:
+                break
             assert isinstance(batch[0], torch.LongTensor)
             user, item, rating = batch[0], batch[1], batch[2]
             rating = rating.float()
             loss = self.train_single_batch(user, item, rating)
-            print('[Training Epoch {}] Batch {}, Loss {}'.format(epoch_id, batch_id, loss))
+            if (batch_id + 1) % self.config['print_freq'] == 0:
+                print('[Training Epoch {}] Batch {}, Loss {}'.format(epoch_id, batch_id + 1, loss))
             total_loss += loss
         self._writer.add_scalar('model/loss', total_loss, epoch_id)
 

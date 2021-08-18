@@ -1,7 +1,8 @@
 """
-    Some handy functions for pytroch model training ...
+    Some handy functions for pytorch model training ...
 """
 import torch
+import time
 
 
 # Checkpoints
@@ -38,3 +39,10 @@ def use_optimizer(network, params):
                                         alpha=params['rmsprop_alpha'],
                                         momentum=params['rmsprop_momentum'])
     return optimizer
+
+
+def _time(is_cuda):
+    if is_cuda:
+        torch.cuda.synchronize()
+
+    return time.time()
