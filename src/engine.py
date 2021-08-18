@@ -36,7 +36,8 @@ class Engine(object):
         assert hasattr(self, 'model'), 'Please specify the exact model !'
         self.batch_count += 1
         if self.config['use_cuda'] is True:
-            users, items, ratings = users.cuda(), items.cuda(), ratings.cuda()
+            with record_function("## NCF distribute emb data ##"):
+                users, items, ratings = users.cuda(), items.cuda(), ratings.cuda()
         with record_function("## Forward ##"):
             t1 = _time(self.config['use_cuda'])
             if self.config['use_cuda']:
