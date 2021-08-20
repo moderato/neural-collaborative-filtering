@@ -31,7 +31,6 @@ class Engine(object):
         self.time_bwd = 0
         self.batch_count = 0
 
-
     def train_single_batch(self, users, items, ratings):
         assert hasattr(self, 'model'), 'Please specify the exact model !'
         self.batch_count += 1
@@ -68,7 +67,7 @@ class Engine(object):
         self.model.train()
         total_loss = 0
         for batch_id, batch in enumerate(train_loader):
-            if batch_id >= self.config['num_batches']:
+            if self.batch_count >= self.config['num_batches']:
                 break
             assert isinstance(batch[0], torch.LongTensor)
             user, item, rating = batch[0], batch[1], batch[2]

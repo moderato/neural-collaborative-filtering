@@ -67,7 +67,7 @@ neumf_config = {'alias': 'pretrain_neumf_factor8neg4',
                 }
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='PyTorch Convnet Benchmark')
+    parser = argparse.ArgumentParser(description='PyTorch NCF Benchmark')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                        help='disable CUDA')
     parser.add_argument('--profile', action='store_true', default=False,
@@ -160,3 +160,4 @@ if __name__ == '__main__':
         with open("ncf_benchmark.prof", "w") as prof_f:
             prof_f.write(prof.key_averages().table(sort_by="self_cpu_time_total"))
         prof.export_chrome_trace("ncf_benchmark.json")
+    
