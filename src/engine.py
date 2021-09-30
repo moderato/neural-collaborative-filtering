@@ -67,8 +67,6 @@ class Engine(object):
         self.model.train()
         total_loss = 0
         for batch_id, batch in enumerate(train_loader):
-            if self.batch_count >= self.config['num_batches']:
-                break
             assert isinstance(batch[0], torch.LongTensor)
             user, item, rating = batch[0], batch[1], batch[2]
             rating = rating.float()
@@ -76,6 +74,8 @@ class Engine(object):
             if (batch_id + 1) % self.config['print_freq'] == 0:
                 print('[Training Epoch {}] Batch {}, Loss {}'.format(epoch_id, batch_id + 1, loss))
             total_loss += loss
+            if self.batch_count >= self.config['num_batches']:
+                break
         self._writer.add_scalar('model/loss', total_loss, epoch_id)
 
     def evaluate(self, evaluate_data, epoch_id):
