@@ -1,5 +1,4 @@
 import torch
-from torch.autograd import Variable
 from torch.autograd.profiler import record_function
 from tensorboardX import SummaryWriter
 
@@ -31,17 +30,33 @@ class Engine(object):
         self.time_bwd = 0
         self.batch_count = 0
 
-    def train_single_batch(self, users, items, ratings):
-        assert hasattr(self, 'model'), 'Please specify the exact model !'
+    def warmup(self, user_indices, item_indices, ratings):
+        assert hasattr(self, 'model'), 'Please specify the exact model!'
+        if self.config['use_cuda']:
+            B = user_indices.shape[0]
+            offsets = torch.tensor(range(B+1), dtype=torch.int32).cuda()
+            user_indices, items_indices, ratings = user_indices.int().view(-1).cuda(), item_indices.int().view(-1).cuda(), ratings.cuda()
+        ratings_pred = self.model(user_indices, items_indices, offsets if self.config['use_cuda'] else None)
+        loss = self.crit(ratings_pred.view(-1), ratings)
+        loss.backward()
+        self.opt.step()
+        self.opt.zero_grad()
+        loss = loss.item()
+        return loss
+
+    def train_single_batch(self, user_indices, item_indices, ratings):
+        assert hasattr(self, 'model'), 'Please specify the exact model!'
         self.batch_count += 1
-        if self.config['use_cuda'] is True:
+        if self.config['use_cuda']:
             with record_function("## NCF distribute emb data ##"):
-                users, items, ratings = users.cuda(), items.cuda(), ratings.cuda()
+                B = user_indices.shape[0]
+                offsets = torch.tensor(range(B+1), dtype=torch.int32).cuda()
+                user_indices, items_indices, ratings = user_indices.int().view(-1).cuda(), item_indices.int().view(-1).cuda(), ratings.cuda()
         with record_function("## Forward ##"):
             t1 = _time(self.config['use_cuda'])
             if self.config['use_cuda']:
                 self.event_start.record()
-            ratings_pred = self.model(users, items)
+            ratings_pred = self.model(user_indices, items_indices, offsets if self.config['use_cuda'] else None)
             if self.config['use_cuda']:
                 self.event_end.record()
             t2 = _time(self.config['use_cuda'])
@@ -63,19 +78,33 @@ class Engine(object):
         return loss
 
     def train_an_epoch(self, train_loader, epoch_id):
-        assert hasattr(self, 'model'), 'Please specify the exact model !'
+        assert hasattr(self, 'model'), 'Please specify the exact model!'
         self.model.train()
         total_loss = 0
+        total_time = 0
         for batch_id, batch in enumerate(train_loader):
             assert isinstance(batch[0], torch.LongTensor)
             user, item, rating = batch[0], batch[1], batch[2]
             rating = rating.float()
-            loss = self.train_single_batch(user, item, rating)
-            if (batch_id + 1) % self.config['print_freq'] == 0:
-                print('[Training Epoch {}] Batch {}, Loss {}'.format(epoch_id, batch_id + 1, loss))
-            total_loss += loss
-            if self.batch_count >= self.config['num_batches']:
+            loss = self.warmup(user, item, rating)
+            if batch_id >= self.config['warmup_batches']:
                 break
+
+        for batch_id, batch in enumerate(train_loader):
+            assert isinstance(batch[0], torch.LongTensor)
+            user, item, rating = batch[0], batch[1], batch[2]
+            rating = rating.float()
+
+            if batch_id < self.config['warmup_batches']:
+                loss = self.warmup(user, item, rating)
+            else:
+                loss = self.train_single_batch(user, item, rating)
+                if (batch_id + 1) % self.config['print_freq'] == 0:
+                    print('[Training Epoch {}] Batch {}, Loss {}, Time {}'.format(epoch_id, batch_id + 1, loss, self.time_fwd + self.time_bwd - total_time))
+                total_loss += loss
+                total_time = self.time_fwd + self.time_bwd
+                if self.batch_count >= self.config['num_batches']:
+                    break
         self._writer.add_scalar('model/loss', total_loss, epoch_id)
 
     def evaluate(self, evaluate_data, epoch_id):
@@ -84,14 +113,14 @@ class Engine(object):
         with torch.no_grad():
             test_users, test_items = evaluate_data[0], evaluate_data[1]
             negative_users, negative_items = evaluate_data[2], evaluate_data[3]
-            if self.config['use_cuda'] is True:
+            if self.config['use_cuda']:
                 test_users = test_users.cuda()
                 test_items = test_items.cuda()
                 negative_users = negative_users.cuda()
                 negative_items = negative_items.cuda()
             test_scores = self.model(test_users, test_items)
             negative_scores = self.model(negative_users, negative_items)
-            if self.config['use_cuda'] is True:
+            if self.config['use_cuda']:
                 test_users = test_users.cpu()
                 test_items = test_items.cpu()
                 test_scores = test_scores.cpu()

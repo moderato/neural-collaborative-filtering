@@ -18,7 +18,7 @@ core.GlobalInit(
     ]
 )
 
-gmf_config = {'alias': 'gmf_factor8neg4-implict',
+gmf_config = {'alias': 'gmf_factor128neg4-implict',
               'optimizer': 'sgd',
               'sgd_lr': 1e-3,
               'sgd_momentum': 0.9,
@@ -30,7 +30,7 @@ gmf_config = {'alias': 'gmf_factor8neg4-implict',
             #   'adam_lr': 1e-3,
               'num_users': 6040,
               'num_items': 3706,
-              'latent_dim': 8,
+              'latent_dim': 128,
               'num_negative': 4,
               'l2_regularization': 0, # 0.01
               'device_id': 0,
@@ -80,6 +80,8 @@ if __name__ == '__main__':
                        help='nb of epochs in loop to average perf')
     parser.add_argument("--num-batches", type=int, default=1e9,
                        help='nb of batches in loop to average perf')
+    parser.add_argument("--warmup-batches", type=int, default=5,
+                       help='warm up batches')
     parser.add_argument("--print-freq", type=int, default=5,
                        help='print frequency')
     parser.add_argument("--engine-type", type=str, default='gmf',
@@ -126,6 +128,7 @@ if __name__ == '__main__':
     config['num_epoch'] = args.num_epoch
     config['batch_size'] = args.batch_size
     config['num_batches'] = args.num_batches
+    config['warmup_batches'] = args.warmup_batches
     config['profile'] = args.profile
     config['collect_execution_graph'] = args.collect_execution_graph
     config['print_freq'] = args.print_freq
@@ -139,7 +142,7 @@ if __name__ == '__main__':
             def __exit__(self, exc_type, exc_value, traceback):
                 return False
         for epoch in range(config['num_epoch']):
-            print('Epoch {} starts !'.format(epoch))
+            print('Epoch {} starts!'.format(epoch))
             print('-' * 80)
             train_loader = sample_generator.instance_a_train_loader(config['num_negative'], config['batch_size'])
 
