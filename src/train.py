@@ -8,15 +8,7 @@ from data import SampleGenerator
 import torch
 import torch.autograd.profiler as profiler
 from torch.autograd.profiler import record_function
-import argparse, graph_observer
-from caffe2.python import core
-core.GlobalInit(
-    [
-        "python",
-        "--pytorch_enable_execution_graph_observer=true",
-        "--pytorch_execution_graph_observer_iter_label=## BENCHMARK ##",
-    ]
-)
+import argparse
 
 gmf_config = {'alias': 'gmf_factor128neg4-implict',
               'optimizer': 'sgd',
@@ -136,25 +128,17 @@ if __name__ == '__main__':
 
     # Train and evaluate
     with profiler.profile(args.profile, use_cuda=args.cuda, use_kineto=True) as prof:
-        class dummy_record_function():
-            def __enter__(self):
-                return None
-            def __exit__(self, exc_type, exc_value, traceback):
-                return False
         for epoch in range(config['num_epoch']):
             print('Epoch {} starts!'.format(epoch))
             print('-' * 80)
             train_loader = sample_generator.instance_a_train_loader(config['num_negative'], config['batch_size'])
+            engine.train_an_epoch(train_loader, epoch_id=epoch)
+            if args.evaluate:
+                hit_ratio, ndcg = engine.evaluate(evaluate_data, epoch_id=epoch)
+                engine.save(config['alias'], epoch, hit_ratio, ndcg)
 
-            with record_function("## BENCHMARK ##") if args.collect_execution_graph else dummy_record_function():
-                engine.train_an_epoch(train_loader, epoch_id=epoch)
-
-                if args.evaluate:
-                    hit_ratio, ndcg = engine.evaluate(evaluate_data, epoch_id=epoch)
-                    engine.save(config['alias'], epoch, hit_ratio, ndcg)
-
-        time_fwd_avg = engine.time_fwd / engine.batch_count * 1000
-        time_bwd_avg = engine.time_bwd / engine.batch_count * 1000
+        time_fwd_avg = engine.time_fwd / engine.global_batch_count * 1000
+        time_bwd_avg = engine.time_bwd / engine.global_batch_count * 1000
         time_total = time_fwd_avg + time_bwd_avg
 
         print("Overall per-batch training time: {:.2f} ms".format(time_total))

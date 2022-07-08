@@ -1,9 +1,11 @@
 import torch
 from torch.autograd.profiler import record_function
+from torch.profiler import ExecutionGraphObserver
 from tensorboardX import SummaryWriter
 
 from utils import save_checkpoint, use_optimizer, _time
 from metrics import MetronAtK
+import tempfile
 
 
 class Engine(object):
@@ -28,7 +30,13 @@ class Engine(object):
         self.event_end = torch.cuda.Event(enable_timing=True)
         self.time_fwd = 0
         self.time_bwd = 0
-        self.batch_count = 0
+        self.global_batch_count = 0
+
+        if self.config['collect_execution_graph']:
+            fp = tempfile.NamedTemporaryFile('w+t', prefix='/tmp/pytorch_execution_graph_', suffix='.json', delete=False)
+            fp.close()
+            self.eg = ExecutionGraphObserver()
+            self.eg.register_callback(fp.name)
 
     def warmup(self, user_indices, item_indices, ratings):
         assert hasattr(self, 'model'), 'Please specify the exact model!'
@@ -46,13 +54,13 @@ class Engine(object):
 
     def train_single_batch(self, user_indices, item_indices, ratings):
         assert hasattr(self, 'model'), 'Please specify the exact model!'
-        self.batch_count += 1
-        if self.config['use_cuda']:
-            with record_function("## NCF distribute emb data ##"):
-                B = user_indices.shape[0]
-                offsets = torch.tensor(range(B+1), dtype=torch.int32).cuda()
-                user_indices, items_indices, ratings = user_indices.int().view(-1).cuda(), item_indices.int().view(-1).cuda(), ratings.cuda()
+        self.global_batch_count += 1
         with record_function("## Forward ##"):
+            if self.config['use_cuda']:
+                with record_function("module::forward_pass::distribute_emb_data"):
+                    B = user_indices.shape[0]
+                    offsets = torch.tensor(range(B+1), dtype=torch.int32).cuda()
+                    user_indices, items_indices, ratings = user_indices.int().view(-1).cuda(), item_indices.int().view(-1).cuda(), ratings.cuda()
             t1 = _time(self.config['use_cuda'])
             if self.config['use_cuda']:
                 self.event_start.record()
@@ -95,6 +103,9 @@ class Engine(object):
             user, item, rating = batch[0], batch[1], batch[2]
             rating = rating.float()
 
+            if self.global_batch_count == 0 and self.config['collect_execution_graph']:
+                self.eg.start()
+
             if batch_id < self.config['warmup_batches']:
                 loss = self.warmup(user, item, rating)
             else:
@@ -103,8 +114,12 @@ class Engine(object):
                     print('[Training Epoch {}] Batch {}, Loss {}, Time {}'.format(epoch_id, batch_id + 1, loss, self.time_fwd + self.time_bwd - total_time))
                 total_loss += loss
                 total_time = self.time_fwd + self.time_bwd
-                if self.batch_count >= self.config['num_batches']:
+                if self.global_batch_count >= self.config['num_batches']:
                     break
+
+            if self.global_batch_count == 0 and self.config['collect_execution_graph']:
+                self.eg.stop()
+                self.eg.unregister_callback()
         self._writer.add_scalar('model/loss', total_loss, epoch_id)
 
     def evaluate(self, evaluate_data, epoch_id):
